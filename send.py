@@ -1,7 +1,7 @@
 import pika
 
 # Conexión al servidor RabbitMQ en localhost
-connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq'))
+connection = pika.BlockingConnection(pika.ConnectionParameters('rabbitmq')) # rabbitmq debera cambiarse por "proxy" para poder utilizarse en este sisteme
 channel = connection.channel()
 
 # Asegurarse de que la cola existe
