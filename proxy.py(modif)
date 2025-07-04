@@ -1,0 +1,76 @@
+import socket
+import threading
+
+LISTEN_PORT = 5672
+RABBITMQ_HOST = 'rabbitmq'
+RABBITMQ_PORT = 5672
+
+# Flags para activar una sola vez cada modificación
+mod1_done = False
+mod2_done = False
+mod3_done = False
+
+def handle_connection(client_sock):
+    global mod1_done, mod2_done, mod3_done
+    print(f"[!] Conexión entrante desde {client_sock.getpeername()}")
+
+    try:
+        rabbit_sock = socket.create_connection((RABBITMQ_HOST, RABBITMQ_PORT))
+    except Exception as e:
+        print(f"[!] Error al conectar a RabbitMQ: {e}")
+        client_sock.close()
+        return
+
+    def forward(src, dst, direction):
+        global mod1_done, mod2_done, mod3_done
+        try:
+            while True:
+                data = src.recv(4096)
+                if not data:
+                    break
+
+                # === MODIFICACIÓN 1 ===
+                # Alterar el mensaje antes de reenviarlo
+                if not mod1_done and direction == "cliente→rabbit" and b'Hola desde send.py' in data:
+                    print("🛠️ Modificación 1: mensaje alterado a 'INSTRUCCION_INVALIDA'")
+                    data = data.replace(b'Hola desde send.py', b'INSTRUCCION_INVALIDA')
+                    mod1_done = True
+
+                # === MODIFICACIÓN 2 ===
+                # Cambiar el primer byte (tipo de frame AMQP) a un valor inválido 0xFF
+                elif not mod2_done and direction == "cliente→rabbit" and b'Hola desde send.py' in data:
+                    print("🛠️ Modificación 2: primer byte del frame cambiado a 0xFF")
+                    data = bytes([0xFF]) + data[1:]
+                    mod2_done = True
+
+                # === MODIFICACIÓN 3 ===
+                # Corromper el byte final del frame (debería ser 0xCE en AMQP)
+                elif not mod3_done and direction == "cliente→rabbit" and b'\xCE' in data:
+                    print("🛠️ Modificación 3: byte final del frame alterado")
+                    data = data.replace(b'\xCE', b'\xCF', 1)  # Cambiar solo una ocurrencia
+                    mod3_done = True
+
+                print(f"📦 Datos ({direction}): {data}")
+                dst.sendall(data)
+
+        except Exception as e:
+            print(f"[!] Error al redirigir: {e}")
+        finally:
+            src.close()
+            dst.close()
+
+    threading.Thread(target=forward, args=(client_sock, rabbit_sock, "cliente→rabbit")).start()
+    threading.Thread(target=forward, args=(rabbit_sock, client_sock, "rabbit→cliente")).start()
+
+def start_proxy():
+    proxy_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    proxy_sock.bind(('0.0.0.0', LISTEN_PORT))
+    proxy_sock.listen(5)
+    print(f"[+] Proxy escuchando en {LISTEN_PORT} y redirigiendo a {RABBITMQ_HOST}:{RABBITMQ_PORT}")
+
+    while True:
+        client_sock, _ = proxy_sock.accept()
+        threading.Thread(target=handle_connection, args=(client_sock,)).start()
+
+if __name__ == "__main__":
+    start_proxy()
