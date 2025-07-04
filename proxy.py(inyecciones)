@@ -1,0 +1,68 @@
+import socket
+import threading
+
+LISTEN_PORT = 5672
+RABBITMQ_HOST = 'rabbitmq'
+RABBITMQ_PORT = 5672
+
+# Variables de control para las inyecciones
+fuzz1_done = False
+fuzz2_done = False
+
+def handle_connection(client_sock):
+    global fuzz1_done, fuzz2_done
+    print(f"[!] Conexión entrante desde {client_sock.getpeername()}")
+    
+    try:
+        rabbit_sock = socket.create_connection((RABBITMQ_HOST, RABBITMQ_PORT))
+    except Exception as e:
+        print(f"[!] Error al conectar a RabbitMQ: {e}")
+        client_sock.close()
+        return
+
+    def forward(src, dst, direction):
+        global fuzz1_done, fuzz2_done
+        try:
+            while True:
+                data = src.recv(4096)
+                if not data:
+                    break
+
+                print(f"📦 Datos ({direction}): {data}")
+
+                # Primera inyección: reemplazo total por payload falso
+                if not fuzz1_done and b'Hola desde send.py' in data:
+                    print("🔧 Inyección activa: reemplazando mensaje con payload fuzzing [1]")
+                    fuzz_payload = b'\x01\x02\x03FUZZING\x04\x05\x06'
+                    data = fuzz_payload + data[len(fuzz_payload):]
+                    fuzz1_done = True
+
+                # Segunda inyección: cambiar el primer byte (tipo de frame inválido)
+                elif not fuzz2_done and b'Hola desde send.py' in data:
+                    print("🔧 Inyección activa: alterando tipo de frame a valor inválido [2]")
+                    data = bytes([0xFF]) + data[1:]
+                    fuzz2_done = True
+
+                dst.sendall(data)
+        except Exception as e:
+            print(f"[!] Error al redirigir: {e}")
+        finally:
+            src.close()
+            dst.close()
+
+    # Redirección en ambas direcciones
+    threading.Thread(target=forward, args=(client_sock, rabbit_sock, 'cliente→rabbit')).start()
+    threading.Thread(target=forward, args=(rabbit_sock, client_sock, 'rabbit→cliente')).start()
+
+def start_proxy():
+    proxy_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    proxy_sock.bind(('0.0.0.0', LISTEN_PORT))
+    proxy_sock.listen(5)
+    print(f"[+] Proxy escuchando en {LISTEN_PORT} y redirigiendo a {RABBITMQ_HOST}:{RABBITMQ_PORT}")
+
+    while True:
+        client_sock, _ = proxy_sock.accept()
+        threading.Thread(target=handle_connection, args=(client_sock,)).start()
+
+if __name__ == "__main__":
+    start_proxy()
