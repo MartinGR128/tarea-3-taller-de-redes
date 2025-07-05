@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+# Instalar utilidades necesarias
+RUN apt update && apt install -y iproute2 tcpdump net-tools iputils-ping && \
+    pip install --no-cache-dir scapy
+
+# Carpeta de trabajo dentro del contenedor
+WORKDIR /sniffer
+
+# Copiamos script para sniffeo
+COPY sniff_rabbit.py .
+
+# Comando por defecto: mantener contenedor vivo
+CMD ["tail", "-f", "/dev/null"]
